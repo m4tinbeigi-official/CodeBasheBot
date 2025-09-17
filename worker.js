@@ -11,7 +11,7 @@ export default {
     try {
       const url = new URL(request.url);
 
-      if (url.pathname === '/webhook' && request.method === 'POST') {
+      if (url.pathname === "/webhook" && request.method === "POST") {
         const update = await request.json();
         console.log("Webhook update received:", update);
 
@@ -30,32 +30,75 @@ export default {
 
         if (chat && messageId && isSystemMessage) {
           await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/deleteMessage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               chat_id: chat.id,
-              message_id: messageId
-            })
+              message_id: messageId,
+            }),
           });
           return new Response("System message deleted", { status: 200 });
         }
 
-        // --- 1. ری‌اکشن 👍 و پیام خودکار ---
-        if (chat && messageId && sender?.is_bot !== true && sender?.username !== BOT_USERNAME) {
+        // --- 0.5. حذف لینک از غیرادمین ---
+        if (chat && messageId && update.message) {
+          const textContent =
+            update.message.text || update.message.caption || "";
 
+          const hasLink = /(https?:\/\/|t\.me\/|www\.)/i.test(textContent);
+
+          if (hasLink) {
+            // گرفتن لیست ادمین‌ها
+            const adminsRes = await fetch(
+              `https://api.telegram.org/bot${BOT_TOKEN}/getChatAdministrators?chat_id=${chat.id}`
+            );
+            const adminsData = await adminsRes.json();
+            const admins = adminsData.result || [];
+
+            const isAdmin = admins.some(
+              (admin) => admin.user.id === sender?.id
+            );
+
+            if (!isAdmin) {
+              await fetch(
+                `https://api.telegram.org/bot${BOT_TOKEN}/deleteMessage`,
+                {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    chat_id: chat.id,
+                    message_id: messageId,
+                  }),
+                }
+              );
+              return new Response("Non-admin link deleted", { status: 200 });
+            }
+          }
+        }
+
+        // --- 1. ری‌اکشن 👍 و پیام خودکار ---
+        if (
+          chat &&
+          messageId &&
+          sender?.is_bot !== true &&
+          sender?.username !== BOT_USERNAME
+        ) {
           // ری‌اکشن 👍
           const reactionPayload = {
             chat_id: chat.id,
             message_id: messageId,
-            reaction: [{ type: 'emoji', emoji: '👍' }],
-            is_big: false
+            reaction: [{ type: "emoji", emoji: "👍" }],
+            is_big: false,
           };
 
-          await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setMessageReaction`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(reactionPayload)
-          });
+          await fetch(
+            `https://api.telegram.org/bot${BOT_TOKEN}/setMessageReaction`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(reactionPayload),
+            }
+          );
 
           // پیام تبلیغاتی فقط در پی وی
           if (chat.type === "private") {
@@ -64,21 +107,27 @@ export default {
             const sendMessagePayload = {
               chat_id: chat.id,
               text: autoMessage,
-              parse_mode: 'HTML',
+              parse_mode: "HTML",
               reply_markup: {
                 inline_keyboard: [
                   [
-                    { text: "عضویت در گروه", url: "https://t.me/+8UV59QfeLSxmNjg0" }
-                  ]
-                ]
-              }
+                    {
+                      text: "عضویت در گروه",
+                      url: "https://t.me/+8UV59QfeLSxmNjg0",
+                    },
+                  ],
+                ],
+              },
             };
 
-            await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(sendMessagePayload)
-            });
+            await fetch(
+              `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(sendMessagePayload),
+              }
+            );
           }
         }
 
@@ -90,5 +139,5 @@ export default {
       console.error("Worker error:", error);
       return new Response("Internal server error", { status: 500 });
     }
-  }
+  },
 };
