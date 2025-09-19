@@ -42,12 +42,24 @@ export default {
 
         // --- 0.5. حذف لینک از غیرادمین ---
         if (chat && messageId && update.message) {
+          // بررسی انواع محتوا (متن، کپشن، نهادها)
           const textContent =
             update.message.text || update.message.caption || "";
+          const entities = update.message.entities || update.message.caption_entities || [];
 
-          const hasLink = /(https?:\/\/|t\.me\/|www\.)/i.test(textContent);
+          // شناسایی لینک‌ها در متن یا کپشن
+          const hasTextLink = /(https?:\/\/|t\.me\/|www\.|[a-zA-Z0-9\-]+\.[a-zA-Z]{2,}(?:\/|$))/i.test(textContent);
 
-          if (hasLink) {
+          // شناسایی لینک‌ها در نهادها (مانند لینک‌های فرمت‌شده)
+          const hasEntityLink = entities.some(
+            (entity) =>
+              entity.type === "url" ||
+              entity.type === "text_link" ||
+              (entity.type === "mention" && /t\.me\//i.test(textContent.slice(entity.offset, entity.offset + entity.length)))
+          );
+
+          // اگر لینک در متن، کپشن یا نهادها وجود داشت
+          if (hasTextLink || hasEntityLink) {
             // گرفتن لیست ادمین‌ها
             const adminsRes = await fetch(
               `https://api.telegram.org/bot${BOT_TOKEN}/getChatAdministrators?chat_id=${chat.id}`
