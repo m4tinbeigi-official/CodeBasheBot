@@ -53,7 +53,8 @@ export default {
                 message_id: messageId,
               }),
             });
-            await sendLog(BOT_TOKEN, chat.id, `پیام ${messageId} با ${totalReactions} ری‌اکشن به کانال ${FORWARD_CHANNEL_ID} فوروارد شد.`);
+            const senderName = sender.username ? `@${sender.username}` : sender.first_name || "کاربر";
+            await sendLog(BOT_TOKEN, chat.id, `پیام ${messageId} از ${senderName} با ${totalReactions} ری‌اکشن به کانال ${FORWARD_CHANNEL_ID} فوروارد شد.`);
           }
           return new Response("Reaction processed", { status: 200 });
         }
@@ -97,7 +98,8 @@ export default {
         ) {
           await forwardDeletedMessage(BOT_TOKEN, REPORT_USER_ID, chat.id, messageId);
           await deleteMessage(BOT_TOKEN, chat.id, messageId);
-          await sendLog(BOT_TOKEN, chat.id, `پیام نامرتبط (استیکر، گیف، صوت، فایل، فوروارد یا متن خالی) از کاربر ${sender.id} حذف شد.`);
+          const senderName = sender.username ? `@${sender.username}` : sender.first_name || "کاربر";
+          await sendLog(BOT_TOKEN, chat.id, `قوانین رو رعایت نکردی ${senderName} و پیامت حذف شد.`);
           return new Response("Irrelevant message deleted", { status: 200 });
         }
 
@@ -109,7 +111,8 @@ export default {
           if (captionWords > 5) {
             await forwardDeletedMessage(BOT_TOKEN, REPORT_USER_ID, chat.id, messageId);
             await deleteMessage(BOT_TOKEN, chat.id, messageId);
-            await sendLog(BOT_TOKEN, chat.id, `پیام با کپشن بیش از 5 کلمه از کاربر ${sender.id} حذف شد.`);
+            const senderName = sender.username ? `@${sender.username}` : sender.first_name || "کاربر";
+            await sendLog(BOT_TOKEN, chat.id, `قوانین رو رعایت نکردی ${senderName} و پیامت حذف شد.`);
             return new Response("Long caption deleted", { status: 200 });
           }
         }
@@ -127,7 +130,8 @@ export default {
           if (!isAdmin) {
             await forwardDeletedMessage(BOT_TOKEN, REPORT_USER_ID, chat.id, messageId);
             await deleteMessage(BOT_TOKEN, chat.id, messageId);
-            await sendLog(BOT_TOKEN, chat.id, `پیام حاوی لینک از کاربر ${sender.id} حذف شد.`);
+            const senderName = sender.username ? `@${sender.username}` : sender.first_name || "کاربر";
+            await sendLog(BOT_TOKEN, chat.id, `قوانین رو رعایت نکردی ${senderName} و پیامت حذف شد.`);
             return new Response("Non-admin link deleted", { status: 200 });
           }
         }
@@ -138,7 +142,8 @@ export default {
           if (!isAdmin) {
             await forwardDeletedMessage(BOT_TOKEN, REPORT_USER_ID, chat.id, messageId);
             await deleteMessage(BOT_TOKEN, chat.id, messageId);
-            await sendLog(BOT_TOKEN, chat.id, `پیام حاوی کلمات ممنوعه از کاربر ${sender.id} حذف شد.`);
+            const senderName = sender.username ? `@${sender.username}` : sender.first_name || "کاربر";
+            await sendLog(BOT_TOKEN, chat.id, `قوانین رو رعایت نکردی ${senderName} و پیامت حذف شد.`);
             return new Response("Bad word message deleted", { status: 200 });
           }
         }
@@ -246,7 +251,7 @@ async function deleteMessage(token, chatId, messageId) {
 }
 
 async function sendLog(token, chatId, message) {
-  await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+  const logMessage = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -254,6 +259,14 @@ async function sendLog(token, chatId, message) {
       text: message,
     }),
   });
+  const logData = await logMessage.json();
+  const logMessageId = logData.result?.message_id;
+
+  // حذف پیام لاگ بعد از 5 ثانیه
+  if (logMessageId) {
+    await new Promise(resolve => setTimeout(resolve, 5000)); // تأخیر 5 ثانیه
+    await deleteMessage(token, chatId, logMessageId);
+  }
 }
 
 async function forwardDeletedMessage(token, reportUserId, chatId, messageId) {
