@@ -21,8 +21,8 @@ export default {
         const messageId = update.message?.message_id;
         const sender = update.message?.from;
 
-        if (!chat || !messageId || !sender) {
-          console.error("Invalid update: missing chat, messageId, or sender");
+        if (!chat || !messageId) {
+          console.error("Invalid update: missing chat or messageId");
           return new Response("Invalid update", { status: 400 });
         }
 
@@ -31,7 +31,9 @@ export default {
         console.log("Chat type:", chat.type, "Is group:", isGroup);
 
         // --- 1. ری‌اکشن 👍 به همه پیام‌ها ---
-        if (!sender.is_bot) {
+        // در گروه: همه پیام‌ها (بدون شرط) لایک می‌شوند
+        // در چت خصوصی: فقط پیام‌های غیربات لایک می‌شوند
+        if (isGroup || (sender && !sender.is_bot)) {
           try {
             const reactionRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setMessageReaction`, {
               method: "POST",
@@ -105,9 +107,9 @@ export default {
         } catch (error) {
           console.error("Error fetching admins:", error.message);
         }
-        const isAdmin = admins.some((admin) => admin.user.id === sender.id);
-        console.log("Sender:", sender.id, "Is admin:", isAdmin);
-        const senderName = sender.username ? `@${sender.username}` : sender.first_name || "کاربر";
+        const isAdmin = sender ? admins.some((admin) => admin.user.id === sender.id) : false;
+        console.log("Sender:", sender?.id, "Is admin:", isAdmin);
+        const senderName = sender?.username ? `@${sender.username}` : sender?.first_name || "کاربر";
 
         // --- 3. حذف پیام‌های سیستمی و خوش‌آمدگویی ---
         const isSystemMessage =
