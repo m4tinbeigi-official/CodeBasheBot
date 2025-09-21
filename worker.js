@@ -28,32 +28,31 @@ export default {
 
         // بررسی نوع چت (گروه یا خصوصی)
         const isGroup = chat.type === "group" || chat.type === "supergroup";
-        console.log("Chat type:", chat.type, "Is group:", isGroup);
+        console.log("Chat type:", chat.type, "Is group:", isGroup, "Message ID:", messageId);
 
         // --- 1. ری‌اکشن 👍 به همه پیام‌ها ---
         // در گروه: همه پیام‌ها (بدون شرط) لایک می‌شوند
         // در چت خصوصی: فقط پیام‌های غیربات لایک می‌شوند
-        if (isGroup || (sender && !sender.is_bot)) {
-          try {
-            const reactionRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setMessageReaction`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                chat_id: chat.id,
-                message_id: messageId,
-                reaction: [{ type: "emoji", emoji: "👍" }],
-                is_big: false,
-              }),
-            });
-            const reactionData = await reactionRes.json();
-            if (!reactionData.ok) {
-              console.error("Reaction API error:", reactionData.description);
-            } else {
-              console.log("Reaction 👍 added successfully for message:", messageId);
-            }
-          } catch (error) {
-            console.error("Error setting reaction:", error.message);
+        try {
+          console.log("Attempting to add 👍 reaction to message:", messageId);
+          const reactionRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setMessageReaction`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: chat.id,
+              message_id: messageId,
+              reaction: [{ type: "emoji", emoji: "👍" }],
+              is_big: false,
+            }),
+          });
+          const reactionData = await reactionRes.json();
+          if (!reactionData.ok) {
+            console.error("Reaction API error for message", messageId, ":", reactionData.description);
+          } else {
+            console.log("Reaction 👍 added successfully for message:", messageId);
           }
+        } catch (error) {
+          console.error("Error setting reaction for message", messageId, ":", error.message);
         }
 
         // --- 2. پیام خودکار در چت خصوصی ---
