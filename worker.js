@@ -3,10 +3,10 @@ export default {
     const BOT_TOKEN = env.BOT_TOKEN;
     const BOT_USERNAME = env.BOT_USERNAME;
     const REPORT_USER_ID = "1414726588"; // User ID for forwarding deleted messages
-    const FORWARD_CHANNEL_ID = "-1003007964208"; // Hard-coded channel ID for forwarding popular posts
+    const VIOLATION_MESSAGE = "نباید کپشن بیش از 5 کلمه بنویسی. پیامت حذف شد"; // پیام اخطار ثابت
 
     if (!BOT_TOKEN || !BOT_USERNAME) {
-      console.error("Missing required environment variables");
+      console.error("Missing required environment variables: BOT_TOKEN or BOT_USERNAME");
       return new Response("Server misconfigured", { status: 500 });
     }
 
@@ -15,51 +15,101 @@ export default {
 
       if (url.pathname === "/webhook" && request.method === "POST") {
         const update = await request.json();
-        console.log("Webhook update received:", update);
+        console.log("Webhook update received:", JSON.stringify(update, null, 2));
 
-        const chat = update.message?.chat || update.message_reaction?.chat;
-        const messageId = update.message?.message_id || update.message_reaction?.message_id;
-        const sender = update.message?.from || update.message_reaction?.user;
+        const chat = update.message?.chat;
+        const messageId = update.message?.message_id;
+        const sender = update.message?.from;
 
-        if (!chat || !messageId) {
+        if (!chat || !messageId || !sender) {
+          console.error("Invalid update: missing chat, messageId, or sender");
           return new Response("Invalid update", { status: 400 });
         }
 
-        // گرفتن لیست ادمین‌ها
-        const adminsRes = await fetch(
-          `https://api.telegram.org/bot${BOT_TOKEN}/getChatAdministrators?chat_id=${chat.id}`
-        );
-        const adminsData = await adminsRes.json();
-        const admins = adminsData.result || [];
-        const isAdmin = sender ? admins.some((admin) => admin.user.id === sender.id) : false;
+        // بررسی نوع چت (گروه یا خصوصی)
+        const isGroup = chat.type === "group" || chat.type === "supergroup";
+        console.log("Chat type:", chat.type, "Is group:", isGroup);
 
-        // --- 0. پردازش آپدیت‌های ری‌اکشن (فوروارد پست با 20+ ری‌اکشن) ---
-        if (update.message_reaction) {
-          const reactionUpdate = update.message_reaction;
-          const reactionCountRes = await fetch(
-            `https://api.telegram.org/bot${BOT_TOKEN}/getMessageReactionCount?chat_id=${chat.id}&message_id=${messageId}`
-          );
-          const reactionData = await reactionCountRes.json();
-          const totalReactions = reactionData.result?.total_reactions || 0;
-
-          if (totalReactions >= 20) {
-            // فوروارد پیام به کانال
-            await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/forwardMessage`, {
+        // --- 1. ری‌اکشن 👍 به همه پیام‌ها ---
+        if (!sender.is_bot) {
+          try {
+            const reactionRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setMessageReaction`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
-                chat_id: FORWARD_CHANNEL_ID,
-                from_chat_id: chat.id,
+                chat_id: chat.id,
                 message_id: messageId,
+                reaction: [{ type: "emoji", emoji: "👍" }],
+                is_big: false,
               }),
             });
-            const senderName = sender.username ? `@${sender.username}` : sender.first_name || "کاربر";
-            await sendLog(BOT_TOKEN, chat.id, `پیام ${messageId} از ${senderName} با ${totalReactions} ری‌اکشن به کانال ${FORWARD_CHANNEL_ID} فوروارد شد.`);
+            const reactionData = await reactionRes.json();
+            if (!reactionData.ok) {
+              console.error("Reaction API error:", reactionData.description);
+            } else {
+              console.log("Reaction 👍 added successfully for message:", messageId);
+            }
+          } catch (error) {
+            console.error("Error setting reaction:", error.message);
           }
-          return new Response("Reaction processed", { status: 200 });
         }
 
-        // --- 1. حذف پیام‌های سیستمی و خوش‌آمدگویی ---
+        // --- 2. پیام خودکار در چت خصوصی ---
+        if (chat.type === "private") {
+          const autoMessage = `سلام! 👋\nبرای تبلیغ لطفا به @m4tinbeigipv پیام بدید و برای عضویت در گروه زیر کلیک کنید:`;
+          const autoRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: chat.id,
+              text: autoMessage,
+              parse_mode: "HTML",
+              reply_markup: {
+                inline_keyboard: [
+                  [
+                    {
+                      text: "عضویت در گروه",
+                      url: "https://t.me/+8UV59QfeLSxmNjg0",
+                    },
+                  ],
+                ],
+              },
+            }),
+          });
+          const autoData = await autoRes.json();
+          if (!autoData.ok) {
+            console.error("Failed to send private message:", autoData.description);
+          }
+          return new Response("Private chat message processed", { status: 200 });
+        }
+
+        // --- از اینجا به بعد فقط برای گروه‌ها ---
+        if (!isGroup) {
+          console.log("Non-group chat, skipping group-specific logic");
+          return new Response("OK", { status: 200 });
+        }
+
+        // گرفتن لیست ادمین‌ها
+        let admins = [];
+        try {
+          const adminsRes = await fetch(
+            `https://api.telegram.org/bot${BOT_TOKEN}/getChatAdministrators?chat_id=${chat.id}`
+          );
+          const adminsData = await adminsRes.json();
+          if (!adminsData.ok) {
+            console.error("Failed to fetch admins:", adminsData.description);
+          } else {
+            admins = adminsData.result || [];
+            console.log("Admins fetched:", admins.map(a => a.user.id));
+          }
+        } catch (error) {
+          console.error("Error fetching admins:", error.message);
+        }
+        const isAdmin = admins.some((admin) => admin.user.id === sender.id);
+        console.log("Sender:", sender.id, "Is admin:", isAdmin);
+        const senderName = sender.username ? `@${sender.username}` : sender.first_name || "کاربر";
+
+        // --- 3. حذف پیام‌های سیستمی و خوش‌آمدگویی ---
         const isSystemMessage =
           update.message?.new_chat_members ||
           update.message?.left_chat_member ||
@@ -71,8 +121,8 @@ export default {
         if (isSystemMessage) {
           if (update.message?.new_chat_members) {
             const newMember = update.message.new_chat_members[0];
-            const welcomeMessage = `سلام ${newMember.first_name}! 👋\nبه گروه کد خوش اومدید.\nقوانین:\n- فقط عکس/ویدیو کد با کپشن حداکثر 5 کلمه مجاز است.\n- لینک فقط توسط ادمین‌ها.\n- چت ممنوع! فقط کد.`;
-            await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+            const welcomeMessage = `سلام ${newMember.first_name}! 👋\nبه گروه کد خوش اومدید.\nقوانین:\n- فقط عکس/ویدیو کد با کپشن حداکثر 5 کلمه.\n- لینک فقط توسط ادمین‌ها.\n- چت ممنوع.\n- کلمات ناپسند یا کلمات "ادمین"، "مدیر"، "admin" در کپشن ممنوع.`;
+            const welcomeRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
@@ -81,12 +131,20 @@ export default {
                 parse_mode: "HTML",
               }),
             });
+            const welcomeData = await welcomeRes.json();
+            if (!welcomeData.ok) {
+              console.error("Failed to send welcome message:", welcomeData.description);
+            }
           }
           await deleteMessage(BOT_TOKEN, chat.id, messageId);
           return new Response("System message deleted", { status: 200 });
         }
 
-        // --- 2. حذف پیام‌های نامرتبط توسط غیرادمین (استیکر، گیف، صوت، فایل، فوروارد، متن خالی) ---
+        const text = update.message?.text || update.message?.caption || "";
+        const entities = update.message?.entities || update.message?.caption_entities || [];
+        console.log("Message text/caption:", text);
+
+        // --- 4. حذف پیام‌های نامرتبط توسط غیرادمین ---
         if (
           !isAdmin &&
           (update.message.sticker ||
@@ -96,28 +154,22 @@ export default {
             update.message.forward_date ||
             (update.message.text && !update.message.photo && !update.message.video))
         ) {
-          await forwardDeletedMessage(BOT_TOKEN, REPORT_USER_ID, chat.id, messageId);
-          await deleteMessage(BOT_TOKEN, chat.id, messageId);
-          const senderName = sender.username ? `@${sender.username}` : sender.first_name || "کاربر";
-          await sendLog(BOT_TOKEN, chat.id, `قوانین رو رعایت نکردی ${senderName} و پیامت حذف شد.`);
+          await handleViolation(BOT_TOKEN, REPORT_USER_ID, chat.id, messageId, senderName, VIOLATION_MESSAGE);
           return new Response("Irrelevant message deleted", { status: 200 });
         }
 
-        // --- 3. چک کپشن عکس/ویدیو برای غیرادمین ---
-        const text = update.message?.text || update.message?.caption || "";
-        const entities = update.message?.entities || update.message?.caption_entities || [];
+        // --- 5. چک کپشن عکس/ویدیو برای غیرادمین ---
         if (!isAdmin && (update.message.photo || update.message.video) && update.message.caption) {
-          const captionWords = update.message.caption.trim().split(/\s+/).length;
+          const cleanCaption = update.message.caption.replace(/[\n\r]+/g, " ").trim();
+          const captionWords = cleanCaption.split(/\s+/).filter(word => word.length > 0).length;
+          console.log("Caption word count:", captionWords, "Clean caption:", cleanCaption);
           if (captionWords > 5) {
-            await forwardDeletedMessage(BOT_TOKEN, REPORT_USER_ID, chat.id, messageId);
-            await deleteMessage(BOT_TOKEN, chat.id, messageId);
-            const senderName = sender.username ? `@${sender.username}` : sender.first_name || "کاربر";
-            await sendLog(BOT_TOKEN, chat.id, `قوانین رو رعایت نکردی ${senderName} و پیامت حذف شد.`);
+            await handleViolation(BOT_TOKEN, REPORT_USER_ID, chat.id, messageId, senderName, VIOLATION_MESSAGE);
             return new Response("Long caption deleted", { status: 200 });
           }
         }
 
-        // --- 4. حذف لینک از غیرادمین ---
+        // --- 6. حذف لینک از غیرادمین ---
         const hasTextLink = /(https?:\/\/|t\.me\/|www\.|[a-zA-Z0-9\-]+\.[a-zA-Z]{2,}(?:\/|$))/i.test(text);
         const hasEntityLink = entities.some(
           (entity) =>
@@ -126,37 +178,64 @@ export default {
             (entity.type === "mention" && /t\.me\//i.test(text.slice(entity.offset, entity.offset + entity.length)))
         );
 
-        if (hasTextLink || hasEntityLink) {
-          if (!isAdmin) {
-            await forwardDeletedMessage(BOT_TOKEN, REPORT_USER_ID, chat.id, messageId);
-            await deleteMessage(BOT_TOKEN, chat.id, messageId);
-            const senderName = sender.username ? `@${sender.username}` : sender.first_name || "کاربر";
-            await sendLog(BOT_TOKEN, chat.id, `قوانین رو رعایت نکردی ${senderName} و پیامت حذف شد.`);
-            return new Response("Non-admin link deleted", { status: 200 });
-          }
+        if ((hasTextLink || hasEntityLink) && !isAdmin) {
+          await handleViolation(BOT_TOKEN, REPORT_USER_ID, chat.id, messageId, senderName, VIOLATION_MESSAGE);
+          return new Response("Non-admin link deleted", { status: 200 });
         }
 
-        // --- 5. فیلتر کلمات بد در کپشن/متن ---
-        const badWords = ["فحش", "توهین", "اسپم"]; // لیست کلمات ممنوعه
-        if (badWords.some((word) => text.toLowerCase().includes(word))) {
-          if (!isAdmin) {
-            await forwardDeletedMessage(BOT_TOKEN, REPORT_USER_ID, chat.id, messageId);
-            await deleteMessage(BOT_TOKEN, chat.id, messageId);
-            const senderName = sender.username ? `@${sender.username}` : sender.first_name || "کاربر";
-            await sendLog(BOT_TOKEN, chat.id, `قوانین رو رعایت نکردی ${senderName} و پیامت حذف شد.`);
-            return new Response("Bad word message deleted", { status: 200 });
-          }
+        // --- 7. فیلتر کلمات بد و خاص ---
+        const badWords = [
+          "فحش",
+          "توهین",
+          "اسپم",
+          "ادمین",
+          "مدیر",
+          "admin",
+          "کثافت",
+          "بی‌شرف",
+          "بی‌ناموس",
+          "هرزه",
+          "فاسد",
+          "جنده",
+          "گوه",
+          "کون",
+          "کص",
+          "مادرجنده",
+          "پدرسگ",
+          "حرومزاده",
+          "دیوث",
+          "لاشی",
+          "اشغال",
+          "گاو",
+          "الاغ",
+          "خر",
+          "سگ",
+          "عوضی",
+          "بی‌غیرت",
+          "پست",
+          "رذل",
+          "کثیف",
+          "چرک"
+        ];
+        if (badWords.some((word) => text.toLowerCase().includes(word.toLowerCase())) && !isAdmin) {
+          await handleViolation(BOT_TOKEN, REPORT_USER_ID, chat.id, messageId, senderName, VIOLATION_MESSAGE);
+          return new Response("Bad word or restricted word deleted", { status: 200 });
         }
 
-        // --- 6. پردازش کامندهای ادمینی ---
+        // --- 8. پردازش کامندهای ادمینی ---
         if (isAdmin && text.startsWith("/")) {
-          const command = text.split(" ")[0];
-          const args = text.split(" ").slice(1);
+          const command = text.split(" ")[0].toLowerCase();
 
           if (command === "/stats") {
-            const activeMembers = (await (await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getChatMemberCount?chat_id=${chat.id}`)).json()).result;
-            let statsMessage = `📊 آمار گروه:\nاعضای فعال: ${activeMembers}`;
-            await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+            const activeMembersRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getChatMemberCount?chat_id=${chat.id}`);
+            const activeMembersData = await activeMembersRes.json();
+            if (!activeMembersData.ok) {
+              console.error("Failed to fetch member count:", activeMembersData.description);
+              return new Response("Failed to process stats", { status: 200 });
+            }
+            const activeMembers = activeMembersData.result || "نامشخص";
+            const statsMessage = `📊 آمار گروه:\nاعضای فعال: ${activeMembers}`;
+            const statsRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
@@ -164,20 +243,28 @@ export default {
                 text: statsMessage,
               }),
             });
+            const statsData = await statsRes.json();
+            if (!statsData.ok) {
+              console.error("Failed to send stats message:", statsData.description);
+            }
             return new Response("Stats command processed", { status: 200 });
           }
 
           if (command === "/pin_rules") {
-            const rulesMessage = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+            const rulesMessageRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 chat_id: chat.id,
-                text: "📜 قوانین گروه کد:\n- فقط عکس/ویدیو کد با کپشن حداکثر 5 کلمه.\n- لینک فقط توسط ادمین.\n- چت ممنوع.",
+                text: "📜 قوانین گروه کد:\n- فقط عکس/ویدیو کد با کپشن حداکثر 5 کلمه.\n- لینک فقط توسط ادمین.\n- چت ممنوع.\n- کلمات ناپسند یا کلمات 'ادمین'، 'مدیر'، 'admin' در کپشن ممنوع.",
               }),
             });
-            const rulesData = await rulesMessage.json();
-            await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/pinChatMessage`, {
+            const rulesData = await rulesMessageRes.json();
+            if (!rulesData.ok) {
+              console.error("Failed to send rules message:", rulesData.description);
+              return new Response("Failed to pin rules", { status: 200 });
+            }
+            const pinRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/pinChatMessage`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
@@ -186,44 +273,11 @@ export default {
                 disable_notification: true,
               }),
             });
+            const pinData = await pinRes.json();
+            if (!pinData.ok) {
+              console.error("Failed to pin rules:", pinData.description);
+            }
             return new Response("Rules pinned", { status: 200 });
-          }
-        }
-
-        // --- 7. ری‌اکشن 👍 و پیام خودکار در چت خصوصی ---
-        if (sender?.is_bot !== true && sender?.username !== BOT_USERNAME) {
-          await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setMessageReaction`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              chat_id: chat.id,
-              message_id: messageId,
-              reaction: [{ type: "emoji", emoji: "👍" }],
-              is_big: false,
-            }),
-          });
-
-          if (chat.type === "private") {
-            const autoMessage = `سلام! 👋\nبرای تبلیغ لطفا به @m4tinbeigipv پیام بدید و برای عضویت در گروه زیر کلیک کنید:`;
-            await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                chat_id: chat.id,
-                text: autoMessage,
-                parse_mode: "HTML",
-                reply_markup: {
-                  inline_keyboard: [
-                    [
-                      {
-                        text: "عضویت در گروه",
-                        url: "https://t.me/+8UV59QfeLSxmNjg0",
-                      },
-                    ],
-                  ],
-                },
-              }),
-            });
           }
         }
 
@@ -232,7 +286,7 @@ export default {
 
       return new Response("Not Found", { status: 404 });
     } catch (error) {
-      console.error("Worker error:", error);
+      console.error("Worker error:", error.message, error.stack);
       return new Response("Internal server error", { status: 500 });
     }
   },
@@ -240,43 +294,76 @@ export default {
 
 // توابع کمکی
 async function deleteMessage(token, chatId, messageId) {
-  await fetch(`https://api.telegram.org/bot${token}/deleteMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      chat_id: chatId,
-      message_id: messageId,
-    }),
-  });
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/deleteMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        message_id: messageId,
+      }),
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      console.error("Delete message error:", data.description);
+    } else {
+      console.log("Message deleted:", messageId);
+    }
+  } catch (error) {
+    console.error("Error deleting message:", error.message);
+  }
 }
 
 async function sendLog(token, chatId, message) {
-  const logMessage = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      chat_id: chatId,
-      text: message,
-    }),
-  });
-  const logData = await logMessage.json();
-  const logMessageId = logData.result?.message_id;
-
-  // حذف پیام لاگ بعد از 5 ثانیه
-  if (logMessageId) {
-    await new Promise(resolve => setTimeout(resolve, 5000)); // تأخیر 5 ثانیه
-    await deleteMessage(token, chatId, logMessageId);
+  try {
+    const logRes = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: message,
+      }),
+    });
+    const logData = await logRes.json();
+    if (!logData.ok) {
+      console.error("Failed to send log message:", logData.description);
+      return;
+    }
+    const logMessageId = logData.result?.message_id;
+    if (logMessageId) {
+      await new Promise(resolve => setTimeout(resolve, 10000));
+      await deleteMessage(token, chatId, logMessageId);
+    }
+  } catch (error) {
+    console.error("Error sending log:", error.message);
   }
 }
 
 async function forwardDeletedMessage(token, reportUserId, chatId, messageId) {
-  await fetch(`https://api.telegram.org/bot${token}/forwardMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      chat_id: reportUserId,
-      from_chat_id: chatId,
-      message_id: messageId,
-    }),
-  });
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/forwardMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: reportUserId,
+        from_chat_id: chatId,
+        message_id: messageId,
+      }),
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      console.error("Forward message error:", data.description);
+    } else {
+      console.log("Message forwarded to report user:", messageId);
+    }
+  } catch (error) {
+    console.error("Error forwarding message:", error.message);
+  }
+}
+
+async function handleViolation(token, reportUserId, chatId, messageId, senderName, violationMessage) {
+  console.log("Handling violation for message:", messageId, "from:", senderName);
+  await forwardDeletedMessage(token, reportUserId, chatId, messageId);
+  await sendLog(token, chatId, `${violationMessage} ${senderName}.`);
+  await deleteMessage(token, chatId, messageId);
 }
