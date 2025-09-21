@@ -34,7 +34,7 @@ export default {
         // در گروه: همه پیام‌ها (بدون شرط) لایک می‌شوند
         // در چت خصوصی: فقط پیام‌های غیربات لایک می‌شوند
         try {
-          console.log("Attempting to add 👍 reaction to message:", messageId);
+          console.log("Attempting to add 👍 reaction to message:", messageId, "in chat type:", chat.type);
           const reactionRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setMessageReaction`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
